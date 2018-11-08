@@ -1,0 +1,407 @@
+package analizador_compilador;
+import java_cup.runtime.Symbol;
+import java.util.ArrayList;
+parser code
+{:
+
+    private ArrayList<Error_Sintactico> lista_Sintacticos = new ArrayList(); //lista de errores sintacticos
+    private ArrayList<Error_Semantico> lista_Semanticos = new ArrayList(); //lista de errores semanticos
+    private Tabla_Simbolos ts = new Tabla_Simbolos(); //tabla de simbolos
+    public ArrayList<Simbolo> multiplesDeclaraciones = new ArrayList(); //aqui se guardan los identificadores en caso de una multiple declaración
+    public ArrayList<Simbolo> listaP = new ArrayList(); //es la lista de parametros de definción de una función
+    public ArrayList<Simbolo> listaPa = new ArrayList(); //es la lista de parametros cuando se llama una funcion
+    
+    public int loop = 0; //saber si el continue y el break están dentro de un bucle
+    public String scope = "global"; //define el scope de la variables
+    public String funcionActual = ""; //me dice cual es la función actual
+    public String tipoActual = ""; //cual es el tipo actual en caso de multiplesdeclaraciones
+    public Boolean multiples = false; //saber so hay multiples declaraciones
+    public Boolean redefinicion = false;
+    
+
+    /* Errores sintacticos*/
+    public void agregarError(String mensaje,String lexema, int fila, int columna){
+        Error_Sintactico e = new Error_Sintactico(lexema,fila,columna,mensaje);
+        lista_Sintacticos.add(e);
+    }
+
+    public void agregarError(String mensaje){
+        System.out.println("Entre a error");
+        int ultimo = lista_Sintacticos.size();
+        lista_Sintacticos.get(ultimo-1).setDescripcion(mensaje);
+    }
+
+    public Tabla_Simbolos getTS(){
+        return this.ts;
+    }   
+
+    public ArrayList getListaSemanticos(){
+        return this.lista_Semanticos;
+    }
+
+    public ArrayList<Error_Sintactico> getLista_Errores(){
+        return this.lista_Sintacticos;
+    }
+
+    // La recuperacion es posible
+    public void syntax_error(Symbol s)
+    {        
+        String lexema = s.value.toString();
+        int fila = s.right;
+        int columna = s.left;
+
+        Error_Sintactico e = new Error_Sintactico(lexema,fila,columna,"Error inesperado, revise la sintaxis");
+        lista_Sintacticos.add(e);
+
+        System.out.println("!!!!!!! Error de sintaxis, revise la llaves !!!!!!!");
+        System.out.println("\t\tLexema: "+lexema + " :" + fila);      
+    }
+
+    // Metodo al que se llama en el momento en que ya no es posible una recuperacion de errores
+    public void unrecovered_syntax_error(Symbol s) throws java.lang.Exception
+    {        
+        String lexema = s.value.toString();
+        int fila = s.right;
+        int columna = s.left;
+
+       
+        System.out.println("!!!!!!! Error Sintactico, Panic Mode !!!!!!! ");
+        System.out.println("\t\tLexema: "+lexema);
+    }
+:}
+
+
+    /*Errores Semanticos */
+action code 
+{:
+    /* Verifica si hay loops en una parte especifica de la gramatica */
+    public void verificarLoop(String id, int lin, int col){
+        if(loop==0){
+            Error_Semantico e = new Error_Semantico(id,lin,col+1,"Sentencia " + id + " no es valida sin loop");
+            lista_Semanticos.add(e); 
+        }
+    }
+
+    /* Verifica el llamado a una función */ 
+    public void verificarCall(String id, int lin, int col){
+        Simbolo fun = new Simbolo("Funcion","","no-define",id,listaPa,lin,col+1);
+        String respuesta = ts.buscarDefinicionFuncion(fun);
+        if(!respuesta.equals("Valido")){ //valido significa que la llamada es correcta
+            Error_Semantico e = new Error_Semantico("Call to: " + fun.getNombre(),fun.getLinea(),fun.getColumna(),respuesta);
+            lista_Semanticos.add(e);
+        }
+        listaPa = new ArrayList();
+        
+    }
+    
+    /* Analiza si una variable ha sido declarada o no*/
+    public void analizarIdentificador(String s, int lin, int col){
+        Simbolo var = new Simbolo("Variable",scope,"no-define",s,lin,col+1);
+        if(!ts.buscarDefinicionVariable(var)){
+            Error_Semantico e = new Error_Semantico(var.getNombre(),var.getLinea(),var.getColumna(),"Variable no definida");
+            lista_Semanticos.add(e);
+        }
+        
+    }
+    
+    /*Controla cada vez que se sale o se entra en un loop*/
+    public void loop(int i){
+        if(i==1){
+            loop = loop +1;
+        }else{
+            loop = loop -1;
+        }
+    }   
+    
+    /*Asigna la función actual */
+    public void nFuncion(String s){
+        parser.funcionActual = s;
+    }
+
+    public void nScope(String s){  //definir un nuevo scope
+        parser.scope = s;
+    }
+
+    public void nTipo(String t){ //definir un nuevo tipo de variable o funcion 
+        parser.tipoActual = t;
+    }
+
+    public void mD(){   //saber si estoy definiendo multiples variables
+        parser.multiples = true;
+    }
+
+    /* Define nuevos parametros cuando se esta definiendo una función*/
+    public void nPara(String tipo, String nombre, int lin, int col){
+        Simbolo p = new Simbolo("Variable",scope,tipo,nombre, lin,col+1);
+        listaP.add(p);
+    }
+
+    /*Agregar una función a la ts, pero primero se hace una verificación de que la información se correcta*/
+    public void aFun(String tipo, String nombre, int lin, int col){
+        redefinicion = false;
+        parser.scope = nombre;
+        Simbolo fun = new Simbolo("Funcion","",tipo,nombre,listaP, lin, col+1);
+        if(!ts.buscarDeclaracion(fun)){
+            System.out.println(fun.getNombre());
+            ts.agregarSimbolo(fun);
+            for(Simbolo var:fun.getParametros()){
+                var.setScope(nombre);
+                if(!ts.buscarDeclaracion(var)){ //sino esta en la tabla de simbolos lo inserta
+                   ts.agregarSimbolo(var);
+                }else{
+                    Error_Semantico e = new Error_Semantico(var.getNombre(),var.getLinea(),var.getColumna(),"Redefinición de variable");
+                    lista_Semanticos.add(e);
+                }   
+            }   
+        }else{
+            Error_Semantico e = new Error_Semantico(fun.getNombre(),fun.getLinea(),fun.getColumna(),"Redefinición de función");
+            lista_Semanticos.add(e);
+            parser.scope = "1";
+            redefinicion = true;
+        }
+        listaP = new ArrayList();
+    }
+
+    public void aDec(){ //agregar multiples variables
+        if(parser.multiples){
+            if(!redefinicion){
+                for(Simbolo var:multiplesDeclaraciones){
+                    var.setTipo(tipoActual);
+                    if(!ts.buscarDeclaracion(var)){ //sino esta en la tabla de simbolos lo inserta
+                        ts.agregarSimbolo(var);
+                    }else{
+                        Error_Semantico e = new Error_Semantico(var.getNombre(),var.getLinea(),var.getColumna(),"Redefinición de variable");
+                        lista_Semanticos.add(e);
+                    }   
+                }
+            }
+            parser.multiples = false;
+            tipoActual = "";
+            multiplesDeclaraciones.clear();
+        }else{
+            if(!redefinicion){
+                Simbolo var = parser.multiplesDeclaraciones.get(0);
+                var.setTipo(tipoActual);
+                if(!ts.buscarDeclaracion(var)){ // sino esta en la table de simbolos lo inserta
+                    ts.agregarSimbolo(var);
+                }else{
+                    Error_Semantico e = new Error_Semantico(var.getNombre(),var.getLinea(),var.getColumna(),"Redefinición de variable");
+                    lista_Semanticos.add(e);
+                }
+            }
+            tipoActual = "";
+            multiplesDeclaraciones.clear();
+        }
+    }
+
+    /*En caso de multiples declaraciones va agregando a una lista temporales las variables a revisar */
+    public void aMult(String id, int lin, int col){
+        Simbolo var = new Simbolo("Variable",scope,"",id,lin,col+1);
+        multiplesDeclaraciones.add(var);
+    }
+    
+    /*Guarda los parametros cuando se llama a una funcion*/
+    public void aPcall(String tipo,String id, int lin, int col){
+        Simbolo pa = new Simbolo(tipo,"","",id,lin,col);
+        listaPa.add(pa);
+    }
+:}
+
+/* ------------------------------------ Terminales -----------------------------------------------*/
+
+/* Palabras Reservadas */
+terminal BREAK, CASE, CHAR, CONST, CONTINUE, DEFAULT, DO, ELSE, FOR, IF, INT, LONG, RETURN, SHORT, SWITCH, VOID, WHILE, READ, WRITE;
+
+/* Operadores */
+terminal DIV, MUL, MEN, LLAI, LLAD, PARI, PARD, PCOMA, DP, NOT, MAS, MAY, MENO, IG, MOD, DIVIG, MULIG, OR, MENMEN, COMA, DIF, MASMAS, MASIG, MAYIG, MENOIG, IGIG, AND, MENIG;
+
+/* Literales */
+terminal IDENTIFICADOR, ENTERO, DECIMAL, OCTAL, STRING, CIENTIFICO, CARACTER, HEXA, CARACTERN;
+
+/* FIN*/
+
+
+
+
+/* --------------------------- No Terminales ----------------------------------------------------*/
+
+non terminal programa, listaDeclaraciones, listaFunciones, declaracionVariable, tDeclaracion, asignacion;
+non terminal multipleDeclaracion, funcion, funcionDeclaracion, parametroDefinicion, parametro, cuerpoFun;
+non terminal operador, jump, literalNumerica, unario, sufijo, postfijo, literal, call;
+non terminal callPara, ifElse, if, baseComun, while, cuerpoControl, control, sentencia, expresion, cuerpo;
+non terminal tipo, expresionPara, literalCaracter, for, condicionFor, expFor;
+/* ---------------------------- Precedencias ---------------------------------------------------*/ 
+
+precedence left PCOMA;
+precedence left MUL, DIV, MOD;
+precedence left MASMAS, MENMEN, MAS, MEN, DIVIG, MULIG, MENIG, MASIG;
+precedence left OR, AND, NOT;
+precedence left IGIG, MAYIG, MENOIG, DIF, MAY, MENO;
+precedence left IG;
+
+precedence left PARI, PARD, COMA;
+precedence left INT, SHORT, LONG, CHAR;
+precedence left IDENTIFICADOR, ENTERO, STRING, DECIMAL, HEXA, DECIMAL, CIENTIFICO, CARACTER, OCTAL, CARACTERN; 
+
+
+/* ---------------------------- GRAMATICAS -----------------------------------------------------*/
+start with programa;
+
+programa::= declaracionVariable programa 
+        | listaFunciones;
+
+listaDeclaraciones::= declaracionVariable
+        | declaracionVariable listaDeclaraciones;
+    
+listaFunciones::= funcion
+        | funcion listaFunciones;
+ 
+declaracionVariable::= INT tDeclaracion {:nTipo("int");aDec();:}
+        | CHAR tDeclaracion {:nTipo("char");aDec();:}
+        | SHORT tDeclaracion {:nTipo("short");aDec();:}
+        | LONG  tDeclaracion {:nTipo("long");aDec();:}
+        | CONST tDeclaracion {:nTipo("const");aDec();:}
+        | CONST INT tDeclaracion {:nTipo("const-int");aDec();:}
+        | CONST LONG tDeclaracion {:nTipo("const-long");aDec();:}
+        | CONST SHORT tDeclaracion {:nTipo("const-short");aDec();:}
+        | CONST CHAR tDeclaracion {:nTipo("const-char");aDec();:};
+
+tDeclaracion::=multipleDeclaracion PCOMA
+        | error PCOMA {:parser.agregarError("Error en la declaración");:};
+
+asignacion::= IDENTIFICADOR:id IG expresion {:aMult(id.toString(),idright,idleft);:};
+
+multipleDeclaracion::=  IDENTIFICADOR:id {:aMult(id.toString(),idright,idleft);:}
+        | IDENTIFICADOR:id {:mD();aMult(id.toString(),idright,idleft);:} COMA multipleDeclaracion {:System.out.println("por aqui");:}
+        | asignacion;
+
+funcion::= INT IDENTIFICADOR:id funcionDeclaracion {:aFun("int",id.toString(),idright,idleft);:} cuerpoFun 
+        | CHAR IDENTIFICADOR:id funcionDeclaracion {:aFun("char",id.toString(),idright,idleft);:} cuerpoFun 
+        | LONG IDENTIFICADOR:id funcionDeclaracion {:aFun("long",id.toString(),idright,idleft);:} cuerpoFun 
+        | SHORT IDENTIFICADOR:id funcionDeclaracion {:aFun("short",id.toString(),idright,idleft);:} cuerpoFun 
+        | VOID IDENTIFICADOR:id funcionDeclaracion  {:aFun("void",id.toString(),idright,idleft);:} cuerpoFun 
+
+        | INT IDENTIFICADOR error {:parser.agregarError("Error en la declaración de la función");:} cuerpoFun 
+        | CHAR IDENTIFICADOR error {:parser.agregarError("Error en la declaración de la función");:} cuerpoFun 
+        | SHORT IDENTIFICADOR error {:parser.agregarError("Error en la declaración de la función");:} cuerpoFun 
+        | LONG IDENTIFICADOR error {:parser.agregarError("Error en la declaración de la función");:} cuerpoFun 
+        | VOID IDENTIFICADOR error {:parser.agregarError("Error en la declaración de la función");:} cuerpoFun;
+
+funcionDeclaracion::= PARI PARD 
+        | PARI parametroDefinicion PARD 
+
+        | PARI error PARD {:agregarError("Error en los parametros de la función");:};
+        
+parametroDefinicion::= parametro
+        | parametro COMA parametroDefinicion; 
+
+parametro::= CHAR IDENTIFICADOR:id {:nPara("char",id.toString(),idright,idleft);:}
+        | INT IDENTIFICADOR:id {:nPara("int",id.toString(),idright,idleft);:}
+        | SHORT IDENTIFICADOR:id {:nPara("short",id.toString(),idright,idleft);:}
+        | LONG IDENTIFICADOR:id {:nPara("long",id.toString(),idright,idleft);:};
+
+cuerpoFun::=  LLAI LLAD
+        | LLAI listaDeclaraciones cuerpo LLAD
+        | LLAI listaDeclaraciones:e {:agregarError("Se esperaba un cuerpo","",eright,eleft);:} LLAD
+        | LLAI cuerpo LLAD ;
+
+
+operador::= IGIG | MOD | DIVIG | MULIG | OR | MENIG | MASIG 
+        | MAYIG | MENOIG | AND | DIF | MAS | MEN | DIV | MUL | MAY | MENO;
+
+jump::= RETURN {::} 
+        | BREAK:id {:verificarLoop(id.toString(),idright,idleft);:}
+        | CONTINUE:id {:verificarLoop(id.toString(),idright,idleft);:};
+
+literalNumerica::= ENTERO | DECIMAL | OCTAL | HEXA | CIENTIFICO;
+
+literalCaracter::= CARACTER | CARACTERN;
+
+unario::= MASMAS | MENMEN;
+
+sufijo::= unario IDENTIFICADOR;
+
+postfijo::= IDENTIFICADOR unario;
+
+literal::= ENTERO | DECIMAL | HEXA | OCTAL | STRING | CARACTER | CIENTIFICO | CARACTERN;
+
+call::= IDENTIFICADOR:id PARI callPara PARD {:verificarCall(id.toString(),idright,idleft);:}
+        | IDENTIFICADOR:id PARI PARD {:verificarCall(id.toString(),idright,idleft);:}
+        | IDENTIFICADOR PARI error {:parser.agregarError("Error en la llamada a función");:} PARD;  
+
+callPara::= expresionPara
+        | expresionPara COMA callPara;
+
+expresionPara::= IDENTIFICADOR:id {:aPcall("Variable",id.toString(),idright,idleft);:}
+        | ENTERO:id {:aPcall("Numero",id.toString(),idright,idleft);:}
+        | DECIMAL:id {:aPcall("Numero",id.toString(),idright,idleft);:} 
+        | OCTAL:id {:aPcall("Numero",id.toString(),idright,idleft);:}
+        | HEXA:id {:aPcall("Numero",id.toString(),idright,idleft);:}
+        | CIENTIFICO:id {:aPcall("Numero",id.toString(),idright,idleft);:}
+        | CARACTER:id {:aPcall("Char",id.toString(),idright,idleft);:}
+        | CARACTERN:id {:aPcall("Char",id.toString(),idright,idleft);:}
+        | call;    
+
+ifElse::= if ELSE cuerpoControl
+       | if ELSE error LLAD {:agregarError("Error en la estructura del if-else");:};
+
+if::= IF baseComun cuerpoControl
+    | IF error {:agregarError("Error en la condición del if");:} cuerpoControl 
+    | IF baseComun error LLAD {:agregarError("Error en la estructura del if");:} ;
+
+baseComun::= PARI expresion PARD;
+
+while::= WHILE {:loop(1);:} baseComun cuerpoControl {:loop(0);:} 
+       | DO {:loop(1);:} cuerpoControl WHILE baseComun PCOMA {:loop(0);:}; 
+
+//       | WHILE baseComun error LLAD {:agregarError("Error en la estructura del while");:};
+//       | WHILE error {:agregarError("Error en la condicion del while");:} cuerpoControl
+//       | DO error WHILE baseComun PCOMA {:agregarError("Error en la estructura del Do-While");:}
+//       | DO cuerpoControl WHILE error PCOMA {:agregarError("Error en la estructura del Do-While");:}
+
+
+expFor::= expresion | tipo asignacion;
+
+for::=   FOR condicionFor cuerpoControl
+       | FOR error cuerpoControl {:agregarError("Error en la condición del for");:}
+       | FOR error LLAD {:agregarError("Error en la estructura del for");:};
+            
+condicionFor::= PARI expFor PCOMA expFor PCOMA expresion PARD
+       | PARI PCOMA expFor PCOMA expFor PARD  
+       | PARI expFor PCOMA PCOMA expFor PARD
+       | PARI expFor PCOMA expFor PCOMA PARD
+       | PARI PCOMA PCOMA expresion PARD
+       | PARI PCOMA PCOMA PARD; 
+
+cuerpoControl::= LLAI cuerpo LLAD
+       | LLAI LLAD;
+    
+control::= if 
+       | ifElse 
+       | while
+       | for ; 
+
+sentencia::= asignacion PCOMA
+       | expresion PCOMA
+       | jump PCOMA
+       | PCOMA
+       | error PCOMA {:agregarError("Error en la sentencia");:};
+
+expresion::=IDENTIFICADOR:id {:analizarIdentificador(id.toString(),idright,idleft);:}
+       | literal 
+       | call 
+       | MASMAS IDENTIFICADOR:id {:analizarIdentificador(id.toString(),idright,idleft);:}  
+       | MENMEN IDENTIFICADOR:id {:analizarIdentificador(id.toString(),idright,idleft);:}
+       | IDENTIFICADOR:id MASMAS {:analizarIdentificador(id.toString(),idright,idleft);:}
+       | IDENTIFICADOR:id MENMEN {:analizarIdentificador(id.toString(),idright,idleft);:}
+       | NOT expresion 
+       | MEN expresion 
+       | PARI expresion PARD 
+       | expresion operador expresion;
+
+cuerpo::= sentencia
+       | control
+       | sentencia cuerpo 
+       | control cuerpo;
+
+tipo::= SHORT | INT | CHAR | LONG;         
